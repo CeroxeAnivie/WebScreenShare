@@ -11,6 +11,7 @@ import org.springframework.stereotype.Service;
 
 import java.awt.*;
 import java.io.ByteArrayOutputStream;
+import java.io.IOException;
 import java.time.Duration;
 import java.util.concurrent.atomic.AtomicBoolean;
 import jakarta.annotation.PostConstruct;
@@ -24,10 +25,10 @@ public class ScreenCaptureService {
     @Value("${screen.index:0}")
     private int screenIndex;
 
-    @Value("${output.resolution:0}") // 0 for 1080p, 1 for original
+    @Value("${output.resolution:0}") // 0 for 720p, 1 for 1080p, 2 for original
     private int outputResolutionChoice;
 
-    @Value("${output.fps:0}") // 0 for 30fps, 1 for 60fps
+    @Value("${output.fps:0}") // 0 for 30fps, 1 for 60fps, 2 for 120fps
     private int outputFpsChoice;
 
     @Autowired
@@ -42,14 +43,28 @@ public class ScreenCaptureService {
     private final AtomicBoolean capturing = new AtomicBoolean(false);
     private volatile Thread captureThread; // volatile 保证可见性
 
+    private int OUTPUT_WIDTH;
+    private int OUTPUT_HEIGHT;
+
     @PostConstruct
     public void initialize() throws Exception {
-        if (outputFpsChoice == 1) {
-            this.TARGET_FPS = 60;
-        } else {
-            this.TARGET_FPS = 30;
+        // 根据选择设置目标帧率和捕获间隔
+        switch (outputFpsChoice) {
+            case 0:
+                this.TARGET_FPS = 30;
+                break;
+            case 1:
+                this.TARGET_FPS = 60;
+                break;
+            case 2:
+                this.TARGET_FPS = 120;
+                break;
+            default:
+                logger.warn("Invalid fps choice: {}. Defaulting to 30fps.", outputFpsChoice);
+                this.TARGET_FPS = 30;
+                break;
         }
-        this.captureInterval = Duration.ofMillis(1000 / TARGET_FPS);
+        this.captureInterval = Duration.ofNanos(1_000_000_000L / TARGET_FPS);
         logger.info("Target frame rate set to: {} FPS", TARGET_FPS);
 
         logger.info("Initializing ScreenCaptureService with JavaCV for screen index: {}", screenIndex);
@@ -70,38 +85,49 @@ public class ScreenCaptureService {
             }
         }
 
-        // 预先计算分辨率（如果需要原始分辨率）
-        int OUTPUT_HEIGHT;
-        int OUTPUT_WIDTH;
-        if (outputResolutionChoice == 1) {
-            // 启动临时抓取器以获取原始尺寸
-            FFmpegFrameGrabber tempGrabber = null;
-            try {
-                String input = "desktop";
-                tempGrabber = new FFmpegFrameGrabber(input);
-                tempGrabber.setFormat("gdigrab");
-                tempGrabber.setOption("framerate", String.valueOf(TARGET_FPS));
-                tempGrabber.start();
-                OUTPUT_WIDTH = tempGrabber.getImageWidth();
-                OUTPUT_HEIGHT = tempGrabber.getImageHeight();
-                logger.info("Output resolution set to original capture resolution: {}x{}", OUTPUT_WIDTH, OUTPUT_HEIGHT);
-            } finally {
-                if (tempGrabber != null) {
-                    try {
-                        tempGrabber.stop();
-                        tempGrabber.release();
-                    } catch (Exception e) {
-                        logger.warn("Error stopping/releasing temporary grabber during init: {}", e.getMessage());
+        // 根据选择设置输出分辨率
+        switch (outputResolutionChoice) {
+            case 0: // 720p
+                this.OUTPUT_WIDTH = 1280;
+                this.OUTPUT_HEIGHT = 720;
+                logger.info("Output resolution set to 720p.");
+                break;
+            case 1: // 1080p
+                this.OUTPUT_WIDTH = 1920;
+                this.OUTPUT_HEIGHT = 1080;
+                logger.info("Output resolution set to 1080p.");
+                break;
+            case 2: // original
+                // 预先计算分辨率（如果需要原始分辨率）
+                FFmpegFrameGrabber tempGrabber = null;
+                try {
+                    String input = "desktop";
+                    tempGrabber = new FFmpegFrameGrabber(input);
+                    tempGrabber.setFormat("gdigrab");
+                    tempGrabber.setOption("framerate", String.valueOf(TARGET_FPS));
+                    tempGrabber.start();
+                    this.OUTPUT_WIDTH = tempGrabber.getImageWidth();
+                    this.OUTPUT_HEIGHT = tempGrabber.getImageHeight();
+                    logger.info("Output resolution set to original capture resolution: {}x{}", OUTPUT_WIDTH, OUTPUT_HEIGHT);
+                } finally {
+                    if (tempGrabber != null) {
+                        try {
+                            tempGrabber.stop();
+                            tempGrabber.release();
+                        } catch (Exception e) {
+                            logger.warn("Error stopping/releasing temporary grabber during init: {}", e.getMessage());
+                        }
                     }
                 }
-            }
-        } else {
-            OUTPUT_WIDTH = 1920;
-            OUTPUT_HEIGHT = 1080;
-            logger.info("Output resolution set to 1080p.");
+                break;
+            default: // 处理无效值，回退到 1080p
+                logger.warn("Invalid resolution choice: {}. Defaulting to 1080p.", outputResolutionChoice);
+                this.OUTPUT_WIDTH = 1920;
+                this.OUTPUT_HEIGHT = 1080;
+                logger.info("Output resolution set to 1080p (default).");
+                break;
         }
 
-        // 初始化抓取器和录制器
         String input = "desktop";
         this.grabber = new FFmpegFrameGrabber(input);
         this.grabber.setFormat("gdigrab");
@@ -109,13 +135,13 @@ public class ScreenCaptureService {
         this.grabber.start();
 
         this.baos = new ByteArrayOutputStream();
-        this.recorder = new FFmpegFrameRecorder(baos, OUTPUT_WIDTH, OUTPUT_HEIGHT);
+        this.recorder = new FFmpegFrameRecorder(baos, OUTPUT_WIDTH, OUTPUT_HEIGHT); // 使用确定的输出尺寸
         this.recorder.setVideoCodec(org.bytedeco.ffmpeg.global.avcodec.AV_CODEC_ID_MJPEG);
         this.recorder.setVideoOption("q:v", "1");
         this.recorder.setVideoOption("qmin", "1");
         this.recorder.setVideoOption("qmax", "5");
         this.recorder.setFormat("mjpeg");
-        this.recorder.setFrameRate(TARGET_FPS);
+        this.recorder.setFrameRate(TARGET_FPS); // 设置录制帧率
 
         this.recorder.setPixelFormat(org.bytedeco.ffmpeg.global.avutil.AV_PIX_FMT_YUV420P);
         this.recorder.setVideoOption("color_range", "jpeg");
@@ -123,18 +149,22 @@ public class ScreenCaptureService {
         this.recorder.setVideoOption("color_trc", "bt709");
         this.recorder.setVideoOption("color_primaries", "bt709");
 
+        // --- 构建过滤器链 ---
         StringBuilder filterBuilder = new StringBuilder();
+        // Crop first (if not using original full desktop)
         filterBuilder.append("crop=").append(screenBounds.width).append(":").append(screenBounds.height)
                 .append(":").append(screenBounds.x).append(":").append(screenBounds.y);
 
-        if (outputResolutionChoice == 0) {
+        // Scale second (only if output is not original)
+        if (outputResolutionChoice != 2) {
             filterBuilder.append(",scale=").append(OUTPUT_WIDTH).append(":").append(OUTPUT_HEIGHT).append(":flags=lanczos");
         }
         String filterChain = filterBuilder.toString();
         this.recorder.setVideoOption("vf", filterChain);
+        // -------------------------
         this.recorder.start();
 
-        logger.info("Screen Capture Service initialized with JavaCV. Crop area: {}x{}@{}x{}, Output: {}x{} (Choice: {}), FPS: {}", screenBounds.width, screenBounds.height, screenBounds.x, screenBounds.y, OUTPUT_WIDTH, OUTPUT_HEIGHT, outputResolutionChoice == 0 ? "1080p" : "Original", TARGET_FPS);
+        logger.info("Screen Capture Service initialized with JavaCV. Crop area: {}x{}@{}x{}, Output: {}x{} (Choice: {}), FPS: {}", screenBounds.width, screenBounds.height, screenBounds.x, screenBounds.y, OUTPUT_WIDTH, OUTPUT_HEIGHT, outputResolutionChoice == 0 ? "720p" : (outputResolutionChoice == 1 ? "1080p" : "Original"), TARGET_FPS);
 
         startCaptureThread();
     }
@@ -167,7 +197,7 @@ public class ScreenCaptureService {
                 }
 
                 baos.reset();
-                recorder.record(frame);
+                recorder.record(frame); // 应用 crop 和可能的 scale 过滤器
                 byte[] encodedBytes = baos.toByteArray();
 
                 // --- 直接发送给 WebSocket Handler ---

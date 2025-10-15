@@ -24,12 +24,12 @@ public class ScreenShareWebSocketHandler extends AbstractWebSocketHandler {
     private final AtomicInteger sessionCount = new AtomicInteger(0);
 
     private static final int SEND_TIME_LIMIT = 60000; // 发送超时时间 (毫秒)
-    private static final int SEND_BUFFER_SIZE = 1024 * 256; // 发送缓冲区大小 (256KB)
+    private static final int SEND_BUFFER_SIZE = 1024 * 256; // 发送缓冲区大小 (256KB) - 调整为合适的大小
 
     @Override
     public void afterConnectionEstablished(WebSocketSession session) throws Exception {
         ConcurrentWebSocketSessionDecorator decoratedSession =
-                new ConcurrentWebSocketSessionDecorator(session, SEND_TIME_LIMIT, SEND_BUFFER_SIZE);
+                new ConcurrentWebSocketSessionDecorator(session, SEND_TIME_LIMIT, SEND_BUFFER_SIZE); // 使用正确的构造函数
         sessions.put(session.getId(), decoratedSession);
         int newCount = sessionCount.incrementAndGet();
         logger.info("WebSocket connection established. Session ID: {}, Total sessions: {}", session.getId(), newCount);
@@ -45,7 +45,6 @@ public class ScreenShareWebSocketHandler extends AbstractWebSocketHandler {
     @Override
     public void handleTransportError(WebSocketSession session, Throwable exception) throws Exception {
         logger.error("Transport error in WebSocket session: {}", session.getId(), exception);
-        // 移除会话
         sessions.remove(session.getId());
         sessionCount.decrementAndGet(); // 确保计数器也减少
         try {
