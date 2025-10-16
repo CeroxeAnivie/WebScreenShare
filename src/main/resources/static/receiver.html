@@ -1,0 +1,622 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Screen Share Receiver</title>
+    <style>
+        html, body {
+            margin: 0;
+            padding: 0;
+            height: 100%;
+            width: 100%;
+            overflow: hidden; /* Hide scrollbars */
+            background-color: black; /* Black background */
+        }
+        body {
+            display: flex;
+            justify-content: center;
+            align-items: center;
+        }
+        #videoContainer {
+            width: 100%;
+            height: 100%;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            overflow: hidden;
+            position: relative; /* Needed for absolutely positioned children */
+        }
+        #video {
+            width: 100%;
+            height: 100%;
+            object-fit: contain; /* Scale to fit within container, maintaining aspect ratio */
+            background-color: black; /* Black background for video element itself */
+            /* Make video element itself invisible when no stream */
+            opacity: 0;
+            transition: opacity 0.3s ease-in-out;
+        }
+        #video.playing {
+            opacity: 1;
+        }
+
+        /* --- NEW: Overlay Button for Autoplay --- */
+        #autoplayOverlay {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background-color: rgba(0, 0, 0, 0.8); /* Semi-transparent black */
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            z-index: 1001; /* Higher than video and debug info */
+            cursor: pointer;
+        }
+        #autoplayButton {
+            padding: 20px 40px;
+            font-size: 24px;
+            background-color: #3498db;
+            color: white;
+            border: none;
+            border-radius: 10px;
+            cursor: pointer;
+        }
+        #autoplayButton:hover {
+            background-color: #2980b9;
+        }
+        /* --- END NEW --- */
+
+
+        /* --- NEW: Hover Area and Debug Info Styles --- */
+        #debugHoverArea {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 50px; /* Adjust size as needed */
+            height: 50px;
+            /* background-color: rgba(255, 0, 0, 0.2); */ /* Optional: visualize hover area during development */
+            z-index: 999; /* High z-index to be on top */
+            cursor: pointer; /* Indicate it's clickable/hoverable */
+        }
+        #debugInfo {
+            position: fixed;
+            top: 10px;
+            left: 10px;
+            background-color: rgba(0, 0, 0, 0.7);
+            color: white;
+            padding: 10px;
+            border-radius: 5px;
+            font-size: 12px;
+            z-index: 1000; /* Ensure it's on top */
+            display: none; /* Hidden by default */
+            max-width: 90vw; /* Prevent overflow on small screens */
+            box-sizing: border-box;
+        }
+        .debug-section {
+            margin-bottom: 5px;
+        }
+        .debug-label {
+            font-weight: bold;
+        }
+        /* --- END NEW --- */
+    </style>
+</head>
+<body>
+<div id="videoContainer">
+    <!-- CRITICAL FIX 1: Ensure NO 'muted' attribute -->
+    <video id="video" autoplay playsinline></video>
+
+    <!-- --- NEW: Autoplay Overlay --- -->
+    <div id="autoplayOverlay" style="display: none;"> <!-- Hidden by default -->
+        <button id="autoplayButton">点击播放</button>
+    </div>
+    <!-- --- END NEW --- -->
+
+</div>
+
+<!-- --- NEW: Hover Area and Debug Info Container --- -->
+<div id="debugHoverArea"></div>
+<div id="debugInfo">
+    <div class="debug-section">
+        <span class="debug-label">远程流信息:</span>
+        <div id="streamInfo">未获取</div>
+    </div>
+    <div class="debug-section">
+        <span class="debug-label">音频轨道状态:</span>
+        <div id="audioTrackInfo">无</div>
+    </div>
+    <div class="debug-section">
+        <span class="debug-label">连接状态:</span>
+        <div id="connectionInfo">未连接</div>
+    </div>
+    <div class="debug-section">
+        <span class="debug-label">视频元素状态:</span>
+        <div id="videoElementInfo">未知</div>
+    </div>
+</div>
+<!-- --- END NEW --- -->
+
+<script>
+    let peerConnection;
+    let remoteStream;
+    let ws;
+    let isAuthenticated = false;
+    let hasReceivedOffer = false;
+    let candidateQueue = [];
+    let reconnectAttempts = 0;
+    const maxReconnectAttempts = 5;
+    const reconnectInterval = 3000; // 3 seconds
+    const signalingServerUrl = `ws://${window.location.host}/ws/signaling`;
+    // --- NEW: Debug Mode Toggle & Hover Logic ---
+    const DEBUG_MODE = true; // Set to false to completely disable debug features
+    let debugHoverTimeout = null; // Timer ID for hiding debug info
+    const DEBUG_HOVER_DELAY = 3000; // Milliseconds to wait before hiding after mouse leaves
+    // --- END NEW ---
+
+    // --- NEW: Utility function for debug logging ---
+    function logDebug(message) {
+        if (DEBUG_MODE) {
+            console.log("[RECEIVER DEBUG] " + message);
+        }
+    }
+
+    // --- NEW: Function to update debug information on the page ---
+    function updateDebugInfo() {
+        if (!DEBUG_MODE) return;
+
+        const streamInfoDiv = document.getElementById('streamInfo');
+        const audioTrackInfoDiv = document.getElementById('audioTrackInfo');
+        const connectionInfoDiv = document.getElementById('connectionInfo');
+        const videoElementInfoDiv = document.getElementById('videoElementInfo');
+        const videoElement = document.getElementById('video');
+
+        if (remoteStream) {
+            const audioTracks = remoteStream.getAudioTracks();
+            const videoTracks = remoteStream.getVideoTracks();
+            streamInfoDiv.textContent = `音频轨道: ${audioTracks.length}, 视频轨道: ${videoTracks.length}`;
+            if (audioTracks.length > 0) {
+                const audioTrack = audioTracks[0];
+                // Truncate long IDs for display
+                audioTrackInfoDiv.textContent = `ID: ${audioTrack.id.substring(0, 8)}..., 启用: ${audioTrack.enabled}, 状态: ${audioTrack.readyState}`;
+            } else {
+                audioTrackInfoDiv.textContent = "无音频轨道";
+            }
+        } else {
+            streamInfoDiv.textContent = "未获取";
+            audioTrackInfoDiv.textContent = "无";
+        }
+
+        if (peerConnection) {
+            connectionInfoDiv.textContent = `连接状态: ${peerConnection.connectionState}, ICE状态: ${peerConnection.iceConnectionState}, 信令状态: ${peerConnection.signalingState}`;
+        } else {
+            connectionInfoDiv.textContent = "无活动连接";
+        }
+
+        if (videoElement) {
+            // Check element properties
+            const rect = videoElement.getBoundingClientRect();
+            videoElementInfoDiv.textContent = `尺寸: ${rect.width.toFixed(0)}x${rect.height.toFixed(0)}, 音量: ${videoElement.volume}, 静音: ${videoElement.muted}, 播放状态: ${videoElement.paused ? '暂停' : '播放'}`;
+        } else {
+            videoElementInfoDiv.textContent = "元素未找到";
+        }
+    }
+    // --- END NEW ---
+
+    // --- NEW: Functions for Hover-based Debug Display ---
+    function showDebugInfo() {
+        if (DEBUG_MODE) {
+            clearTimeout(debugHoverTimeout); // Clear any existing hide timer
+            const debugInfo = document.getElementById('debugInfo');
+            if (debugInfo) {
+                debugInfo.style.display = 'block';
+                updateDebugInfo(); // Refresh info when shown
+            }
+        }
+    }
+
+    function scheduleHideDebugInfo() {
+        if (DEBUG_MODE) {
+            debugHoverTimeout = setTimeout(() => {
+                const debugInfo = document.getElementById('debugInfo');
+                if (debugInfo) {
+                    debugInfo.style.display = 'none';
+                }
+            }, DEBUG_HOVER_DELAY);
+        }
+    }
+
+    function setupDebugHoverListeners() {
+        if (!DEBUG_MODE) return;
+
+        const hoverArea = document.getElementById('debugHoverArea');
+        const debugInfo = document.getElementById('debugInfo');
+
+        if (hoverArea && debugInfo) {
+            hoverArea.addEventListener('mouseenter', showDebugInfo);
+            hoverArea.addEventListener('mouseleave', scheduleHideDebugInfo);
+            debugInfo.addEventListener('mouseenter', showDebugInfo); // Keep it open if mouse moves over the info itself
+            debugInfo.addEventListener('mouseleave', scheduleHideDebugInfo);
+        }
+    }
+    // --- END NEW ---
+
+    // --- NEW: Autoplay Handling Functions ---
+    function showAutoplayOverlay() {
+        const overlay = document.getElementById('autoplayOverlay');
+        if (overlay) {
+            overlay.style.display = 'flex'; // Show the overlay
+            logDebug("显示自动播放覆盖层。");
+        }
+    }
+
+    function hideAutoplayOverlay() {
+        const overlay = document.getElementById('autoplayOverlay');
+        if (overlay) {
+            overlay.style.display = 'none'; // Hide the overlay
+            logDebug("隐藏自动播放覆盖层。");
+        }
+    }
+
+    function setupAutoplayOverlay() {
+        const button = document.getElementById('autoplayButton');
+        const overlay = document.getElementById('autoplayOverlay');
+        const videoElement = document.getElementById('video');
+
+        if (button && overlay && videoElement) {
+            button.addEventListener('click', () => {
+                logDebug("用户点击了自动播放按钮。");
+                // Ensure unmuted state before playing
+                videoElement.muted = false;
+                const playPromise = videoElement.play();
+                if (playPromise !== undefined) {
+                    playPromise.then(() => {
+                        logDebug("用户交互后 Video play() 成功调用");
+                        hideAutoplayOverlay(); // Hide overlay on success
+                        videoElement.classList.add('playing'); // Make video visible
+                        updateDebugInfo();
+                    }).catch(e => {
+                        console.error("用户交互后 Video play() 仍然失败:", e);
+                        // Even if it fails again, hide the overlay to avoid blocking forever
+                        // unless it's a specific recoverable error we want to handle
+                        hideAutoplayOverlay();
+                        updateDebugInfo();
+                    });
+                }
+            });
+        }
+    }
+    // --- END NEW ---
+
+
+    // --- Auto-connect on page load ---
+    window.addEventListener('load', (event) => {
+        logDebug('页面加载完成，尝试连接...');
+        if (DEBUG_MODE) {
+            document.getElementById('debugInfo').style.display = 'block';
+        }
+        setupDebugHoverListeners(); // Setup hover listeners for debug info
+        setupAutoplayOverlay(); // Setup autoplay overlay listener
+        connectAndAuthenticate();
+    });
+
+    // --- Cleanup on page unload/close ---
+    window.addEventListener('beforeunload', (event) => {
+        logDebug('页面即将卸载，清理资源...');
+        cleanup();
+    });
+
+    function connectAndAuthenticate() {
+        // For "no password", we still send an empty string to the server.
+        const passwordToSend = "";
+
+        try {
+            ws = new WebSocket(signalingServerUrl);
+        } catch (e) {
+            console.error("创建 WebSocket 连接失败:", e);
+            scheduleReconnect();
+            return;
+        }
+
+        ws.onopen = function(event) {
+            logDebug('连接到信令服务器');
+            reconnectAttempts = 0; // Reset on successful connection
+            const authMessage = JSON.stringify({
+                type: 'auth',
+                password: passwordToSend, // Send empty string
+                role: 'receiver'
+            });
+            ws.send(authMessage);
+        };
+
+        ws.onmessage = function(event) {
+            const message = JSON.parse(event.data);
+            logDebug('收到消息 (类型: ' + message.type + ')'); // Brief log
+            // Detailed log only in debug mode
+            if (DEBUG_MODE) {
+                console.log('收到详细消息:', message);
+            }
+            if (message.type === 'auth_success' && message.role === 'receiver') {
+                logDebug('接收端认证成功');
+                isAuthenticated = true;
+                setupPeerConnection();
+                logDebug('请求来自发送端的Offer。');
+                ws.send(JSON.stringify({ type: 'request_offer' }));
+            } else if (message.type === 'auth_error') {
+                console.error('认证失败:', message.message);
+                alert('认证失败: ' + message.message + '\n请检查密码或服务器状态。');
+                ws.close(); // Close connection on auth error
+            } else if (message.type === 'offer' && peerConnection) {
+                const offer = new RTCSessionDescription(message.offer);
+                peerConnection.setRemoteDescription(offer).then(() => {
+                     logDebug('Offer设置为远程描述。');
+                     hasReceivedOffer = true;
+                     processCandidateQueue();
+                     return peerConnection.createAnswer();
+                }).then(answer => {
+                     logDebug('创建Answer。');
+                     return peerConnection.setLocalDescription(answer);
+                }).then(() => {
+                     logDebug('设置本地Answer为本地描述。');
+                     ws.send(JSON.stringify({ type: 'answer', answer: peerConnection.localDescription }));
+                     updateDebugInfo(); // Update after setting local desc
+                }).catch(e => {
+                    console.error('设置远程Offer / 创建Answer / 设置本地Answer 错误:', e);
+                    // Consider closing connection or retrying on severe SDP errors
+                });
+            } else if (message.type === 'candidate' && peerConnection) {
+                if (hasReceivedOffer) {
+                    const candidate = new RTCIceCandidate(message.candidate);
+                    peerConnection.addIceCandidate(candidate).catch(e => console.error('添加候选失败:', e));
+                } else {
+                    logDebug('在Offer前收到候选，排队。');
+                    candidateQueue.push(message.candidate);
+                }
+            } else if (message.type === 'answer' && peerConnection) {
+                console.warn('在接收端收到Answer，忽略。');
+            } else if (message.type === 'sender_started') {
+                 logDebug('发送端已开始共享。');
+                 // Status update handled by ontrack. Can be used for UI feedback if needed.
+            } else if (message.type === 'sender_stopped') {
+                 logDebug('发送端已停止共享。');
+                 handleStreamStop();
+            }
+        };
+
+        ws.onclose = function(event) {
+            logDebug('信令WebSocket关闭: ' + event.code + ' ' + event.reason);
+            // Reset states that depend on the WebSocket connection
+            isAuthenticated = false;
+
+            // Schedule a reconnect attempt unless it was a clean closure by the app
+            if (event.code !== 1000) { // 1000 is normal closure
+                 scheduleReconnect();
+            } else {
+                logDebug("WebSocket 正常关闭，不进行重连。");
+            }
+        };
+
+        ws.onerror = function(error) {
+             console.error("WebSocket 发生错误:", error);
+             // Error event often precedes onclose, so we don't need to schedule reconnect here necessarily
+             // Let onclose handle the reconnection logic
+        };
+    }
+
+    function setupPeerConnection() {
+        // Use a STUN server for NAT traversal
+        const configuration = { iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] };
+        peerConnection = new RTCPeerConnection(configuration);
+
+        peerConnection.onicecandidate = function(event) {
+            if (event.candidate && isAuthenticated && ws && ws.readyState === WebSocket.OPEN) {
+                ws.send(JSON.stringify({ type: 'candidate', candidate: event.candidate }));
+            }
+        };
+
+        peerConnection.ontrack = function(event) {
+            logDebug('收到远程轨道 (种类: ' + event.track.kind + ')');
+            // --- CRITICAL FIX 2: Properly handle the remote stream ---
+            // The recommended way is to use event.streams[0]
+            if (event.streams && event.streams.length > 0) {
+                if (!remoteStream) {
+                    // Assign the stream only once, on the first track
+                    remoteStream = event.streams[0];
+                    logDebug('首次收到流，使用 event.streams[0] 作为 remoteStream');
+                } else if (remoteStream !== event.streams[0]) {
+                     logDebug('警告：收到不同的流对象，可能存在逻辑错误。');
+                } else {
+                     logDebug('后续轨道添加到已存在的 remoteStream');
+                }
+            } else {
+                // Fallback (less common with modern browsers for screen share)
+                logDebug('event.streams 为空，尝试使用 track 创建新流...');
+                if (!remoteStream) {
+                     remoteStream = new MediaStream();
+                }
+                remoteStream.addTrack(event.track);
+            }
+            // --- END CRITICAL FIX 2 ---
+
+            const videoElement = document.getElementById('video');
+            if (videoElement && remoteStream) {
+                logDebug('设置视频源为远程流');
+                videoElement.srcObject = remoteStream; // Set srcObject once
+
+                // --- FIXED: Simplified Autoplay Handling ---
+                // Play the video explicitly (helps with autoplay policies)
+                const playPromise = videoElement.play();
+                if (playPromise !== undefined) {
+                    playPromise.then(() => {
+                        logDebug("Video play() 成功调用");
+                        // Add class to make video visible and play
+                        videoElement.classList.add('playing');
+                        hideAutoplayOverlay(); // Hide overlay if it was shown before
+                        updateDebugInfo();
+                    }).catch(e => {
+                        console.warn("Video play() 失败 (可能需要用户手势):", e);
+                        if (e.name === "NotAllowedError") {
+                            logDebug("自动播放被阻止，显示覆盖层引导用户交互。");
+                            // Instead of trying to play muted automatically,
+                            // show an overlay asking the user to click.
+                            showAutoplayOverlay();
+                            updateDebugInfo();
+                            // Do NOT call play() again here. Wait for user interaction.
+                        } else {
+                            // Handle other potential play errors
+                            console.error("Video play() 失败 (其他原因):", e);
+                            updateDebugInfo();
+                        }
+                    });
+                }
+
+                updateDebugInfo(); // Update debug info when stream starts
+            } else {
+                console.error("无法设置视频源: videoElement 或 remoteStream 不存在");
+            }
+        };
+
+
+        peerConnection.oniceconnectionstatechange = function() {
+            logDebug('ICE连接状态改变: ' + peerConnection.iceConnectionState);
+            updateDebugInfo(); // Update on state change
+            if (peerConnection.iceConnectionState === 'failed' || peerConnection.iceConnectionState === 'disconnected' || peerConnection.iceConnectionState === 'closed') {
+                console.error('ICE连接失败或断开:', peerConnection.iceConnectionState);
+                if (peerConnection.iceConnectionState === 'failed') {
+                     scheduleReconnect(); // Aggressive reconnect on failure
+                }
+            }
+        };
+
+        peerConnection.onconnectionstatechange = function() {
+             logDebug('连接状态改变: ' + peerConnection.connectionState);
+             updateDebugInfo(); // Update on state change
+             if (peerConnection.connectionState === 'failed' || peerConnection.connectionState === 'disconnected') {
+                 console.error('连接失败或断开:', peerConnection.connectionState);
+                 if (peerConnection.connectionState === 'failed') {
+                     scheduleReconnect();
+                 }
+             }
+             // Handle connected/completed state if needed for UI updates
+             if (peerConnection.connectionState === 'connected' || peerConnection.connectionState === 'completed') {
+                 logDebug('WebRTC 连接已建立。');
+                 // --- REMOVED: Aggressive unmute attempts ---
+                 // The overlay method is preferred. Removing complex unmute logic here.
+                 // --- END REMOVED ---
+             }
+        };
+
+        peerConnection.onnegotiationneeded = function() {
+             logDebug('需要重新协商 (Negotiation Needed)'); // Might be triggered in some scenarios
+             // Implement renegotiation logic if needed (e.g., adding/removing tracks dynamically)
+             // For basic screen sharing, this might not be necessary initially.
+        };
+    }
+
+    function processCandidateQueue() {
+         logDebug('处理排队的候选，数量: ' + candidateQueue.length);
+         for (const candidateData of candidateQueue) {
+             const candidate = new RTCIceCandidate(candidateData);
+             peerConnection.addIceCandidate(candidate).catch(e => console.error('添加排队候选失败:', e));
+         }
+         candidateQueue = []; // Clear the queue after processing
+         updateDebugInfo(); // Update after processing candidates
+    }
+
+    function handleStreamStop() {
+         // Clear video source and hide it
+         const videoElement = document.getElementById('video');
+         if (videoElement) {
+             videoElement.srcObject = null;
+             videoElement.classList.remove('playing');
+             // Pause the video element as well
+             videoElement.pause();
+             logDebug("视频元素源已清空，类已移除，已暂停。");
+         }
+         if (remoteStream) {
+             // Stop tracks on the remote stream if needed (browser usually handles this)
+             // remoteStream.getTracks().forEach(track => track.stop());
+             remoteStream = null;
+             logDebug("远程流引用已置空。");
+         }
+         hideAutoplayOverlay(); // Hide overlay on stop
+         logDebug("视频流已停止。");
+         updateDebugInfo(); // Update debug info on stop
+    }
+
+    function scheduleReconnect() {
+        if (reconnectAttempts < maxReconnectAttempts) {
+            reconnectAttempts++;
+            logDebug(`连接丢失，${reconnectInterval / 1000}秒后尝试第 ${reconnectAttempts} 次重连...`);
+            setTimeout(() => {
+                // Ensure previous connection is fully cleaned up before reconnecting
+                cleanup();
+                connectAndAuthenticate();
+            }, reconnectInterval);
+        } else {
+            console.error("达到最大重连次数，停止重连。");
+            alert("无法连接到服务器，请检查网络或稍后重试。");
+            // Optionally, show a permanent error UI element
+            if (DEBUG_MODE) {
+                document.getElementById('connectionInfo').textContent = "重连失败";
+            }
+        }
+    }
+
+    function cleanup() {
+        logDebug("执行清理操作...");
+        // 1. Close WebSocket if open
+        if (ws) {
+            ws.onopen = null;
+            ws.onmessage = null;
+            ws.onerror = null;
+            ws.onclose = null; // Prevent onclose from triggering reconnect
+            if (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING) {
+                ws.close(1000, "Client initiated close"); // Use code 1000 for normal closure
+            }
+            ws = null;
+        }
+
+        // 2. Close RTCPeerConnection if exists
+        if (peerConnection) {
+             peerConnection.onicecandidate = null;
+             peerConnection.ontrack = null;
+             peerConnection.oniceconnectionstatechange = null;
+             peerConnection.onconnectionstatechange = null;
+             peerConnection.onnegotiationneeded = null;
+             try {
+                 peerConnection.close(); // close() is safe to call multiple times
+             } catch (e) {
+                 console.warn("关闭 RTCPeerConnection 时出错:", e);
+             }
+             peerConnection = null;
+        }
+
+        // 3. Reset state variables
+        isAuthenticated = false;
+        hasReceivedOffer = false;
+        candidateQueue = [];
+
+        // 4. Clear video source and hide it
+        const videoElement = document.getElementById('video');
+        if (videoElement) {
+            videoElement.srcObject = null;
+            videoElement.classList.remove('playing');
+            videoElement.pause(); // Ensure paused
+            // --- FIX: Ensure unmuted state on cleanup ---
+            videoElement.muted = false; // Reset muted state on cleanup
+            // --- END FIX ---
+            logDebug("视频元素源已清空，类已移除，已暂停 (清理)。");
+        }
+        remoteStream = null; // Clear reference
+        hideAutoplayOverlay(); // Hide overlay on cleanup
+        logDebug("远程流引用已置空 (清理)。");
+
+        logDebug("清理操作完成。");
+        updateDebugInfo(); // Update debug info after cleanup
+    }
+
+</script>
+</body>
+</html>

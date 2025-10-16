@@ -1,96 +1,103 @@
-Java屏幕共享 (Java Screen Sharing)
+# WebScreenShare 🖥️🔗
 
-一个基于 Java + Spring Boot + JavaCV + WebSocket 的高性能、低延迟屏幕共享解决方案。
+**基于 WebRTC 的实时屏幕共享应用，支持多接收端！**
 
-## ✨ 特性 (Features)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![Java Version](https://img.shields.io/badge/Java-21-orange?logo=java)](https://adoptium.net/)
+[![Spring Boot](https://img.shields.io/badge/Spring%20Boot-3.3.4-brightgreen?logo=springboot)](https://spring.io/projects/spring-boot)
 
-*   **<img src="https://cdn-icons-png.flaticon.com/512/455/455699.png" width="20" height="20" /> 高性能共享:** 利用 JavaCV 和 FFmpeg 进行高效的屏幕捕获与 JPEG 编码。
-*   **<img src="https://cdn-icons-png.flaticon.com/512/2821/2821859.png" width="20" height="20" /> WebSocket 实时传输:** 使用 WebSocket 协议推送视频帧，实现低延迟。
-*   **<img src="https://cdn-icons-png.flaticon.com/512/455/455680.png" width="20" height="20" /> 多种分辨率支持:** 支持 720p、1080p 压缩以及原画输出。
-*   **<img src="https://cdn-icons-png.flaticon.com/512/455/455680.png" width="20" height="20" /> 多种帧率支持:** 支持 30fps、60fps、120fps 输出。
-*   **<img src="https://cdn-icons-png.flaticon.com/512/1828/1828415.png" width="20" height="20" /> 身份认证:** 可选的 8 位数字密码认证。
-*   **<img src="https://cdn-icons-png.flaticon.com/512/3075/3075086.png" width="20" height="20" /> 多客户端支持:** 一个服务端可支持多个浏览器客户端同时观看。
-*   **<img src="https://cdn-icons-png.flaticon.com/512/455/455679.png" width="20" height="20" /> 局域网访问:** 服务端可配置为监听所有网络接口，允许局域网内其他设备访问。
-*   **<img src="https://cdn-icons-png.flaticon.com/512/3081/3081985.png" width="20" height="20" /> 自适应网页显示:** 共享内容会自适应浏览器窗口大小，完整显示。
-*   **<img src="https://cdn-icons-png.flaticon.com/512/455/455676.png" width="20" height="20" /> 参数化启动:** 支持通过命令行参数配置屏幕、分辨率、帧率、端口、密码等。
-*   **<img src="https://cdn-icons-png.flaticon.com/512/25/25231.png" width="20" height="20" /> 中文友好:** 控制台交互界面支持中文。
-*   **<img src="https://cdn-icons-png.flaticon.com/512/3096/3096154.png" width="20" height="20" /> 优雅退出:** 支持 `Ctrl+C` 优雅关闭服务。
+## 🌟 特性
 
-## 🛠️ 环境要求 (Prerequisites)
+*   **🔐 安全访问**: 可选密码保护，保障您的共享安全。
+*   **👥 多人观看**: 单一发送端，支持**多个接收端**同时观看屏幕共享。
+*   **🔊 音频共享**: 支持共享屏幕的同时共享系统音频（需在浏览器共享选择器中勾选）。
+*   **🌐 局域网访问**: 服务绑定到 `0.0.0.0`，方便局域网内其他设备访问。
+*   **🖱️ 易于使用**: 简洁直观的网页界面，轻松开始/停止共享。
+*   **🎨 友好交互**: 发送端和接收端均提供清晰的状态提示和交互反馈。
+*   **🛠️ 调试友好**: 启动时添加 `--debug` 参数可获得详细的信令和连接日志。
 
-*   **<img src="https://cdn-icons-png.flaticon.com/512/25/25231.png" width="20" height="20" /> Java:** <a href="https://openjdk.org/projects/jdk/21/">Java 21</a> 或更高版本
-*   **操作系统:** Windows, Linux, macOS (需支持 Java AWT 和 FFmpeg)
-*   **网络:** 本地或局域网访问
+## 🚀 快速开始
 
-## 🚀 快速开始 (Quick Start)
+### 📋 前置要求
 
-### 1. 编译项目
+*   **Java 21 JDK**: 确保您的系统已安装 Java 21。 ([Eclipse Temurin](https://adoptium.net/) 是一个不错的选择)
+*   **Maven**: 用于构建项目。 (通常随 JDK 一起安装，或可单独下载)
+*   **支持 WebRTC 的现代浏览器**: 用于访问 `sender.html` 和 `receiver.html` (例如 Chrome, Edge, Firefox)。
 
-确保已安装 Maven，然后在项目根目录执行：
+### ⬇️ 获取代码
 
 ```bash
+git clone https://github.com/ceroxe/WebScreenShare.git
+cd WebScreenShare
+```
+
+### 🔨 构建项目
+
+```bash
+# 使用 Maven Wrapper (推荐)
+./mvnw clean package
+
+# 或者，如果您已全局安装 Maven
 mvn clean package
 ```
 
-这将在 `target/` 目录下生成一个可执行的 JAR 文件（例如 `auto-screen-share-1.0-SNAPSHOT.jar`）。
-
-### 2. 运行服务
-
-在命令行中运行 JAR 文件：
+### ▶️ 运行应用
 
 ```bash
-java -jar target/WebScreenShare-XXXX.jar
+# 使用 Maven 插件运行 (推荐开发)
+./mvnw spring-boot:run
+
+# 或者，运行打包好的 JAR 文件
+java -jar target/*.jar
+
+# 启用调试模式 (输出详细日志)
+# ./mvnw spring-boot:run -Dspring-boot.run.arguments="--debug"
+# java -jar target/*.jar --debug
 ```
 
-### 3. 配置服务
+### 🛠️ 配置
 
-程序启动后，会根据系统语言显示交互界面：
+应用启动后，会在控制台提示您输入：
 
-1.  **选择屏幕:** 选择要共享的屏幕编号。
-2.  **选择分辨率:** 选择 720p, 1080p 或原画输出。
-3.  **选择帧率:** 选择 30fps, 60fps 或 120fps。
-4.  **输入端口:** 输入 HTTP 服务端口 (例如 8080)。
-5.  **设置密码:** (可选) 输入 8 位数字密码，或直接按回车跳过认证。
+1.  **HTTP 端口**: 默认为 `8080`。
+2.  **访问密码**: 可按回车留空表示不设置密码。
 
-### 4. 访问共享
+启动成功后，控制台将显示类似以下的访问链接：
 
-*   **本机访问:** 打开浏览器，访问 `http://localhost:<端口>` (例如 `http://localhost:8080`)。
-*   **局域网访问:** 在局域网内的其他设备浏览器中，访问服务端的 IP 地址和端口 (例如 `http://192.168.1.100:8080`)。
-
-如果设置了密码，需要在登录页面输入正确密码后才能观看共享内容。
-
-## ⚙️ 参数化启动 (Parameterized Startup)
-
-您可以使用以下命令行参数直接启动，跳过交互式配置：
-
-*   `--screen <number>`: 指定要共享的屏幕编号 (例如 `--screen 0`)。
-*   `--resolution <number>`: 指定输出分辨率 (0: 720p, 1: 1080p, 2: Original) (例如 `--resolution 1`)。
-*   `--fps <number>`: 指定输出帧率 (0: 30fps, 1: 60fps, 2: 120fps) (例如 `--fps 2`)。
-*   `--port <number>`: 指定 HTTP 服务端口 (例如 `--port 9090`)。
-*   `--password <string>`: 设置访问密码 (例如 `--password 12345678`)。如果密码为空字符串 (`""`)，则跳过认证。
-*   `--debug`: 启用详细日志输出。
-
-**示例:**
-
-```bash
-# 启动服务，共享屏幕 0，1080p，60fps，端口 8081，密码 88888888
-java -jar target/WebScreenShare-XXXX.jar --screen 0 --resolution 1 --fps 1 --port 8081 --password 88888888
-
-# 启动服务，共享屏幕 1，720p，120fps，端口 9090，跳过认证
-java -jar target/WebScreenShare-XXXX.jar --screen 1 --resolution 0 --fps 2 --port 9090 --password ""
-
-# 启动服务并启用调试日志
-java -jar target/WebScreenShare-XXXX.jar --debug
+```
+--- 服务器已启动 ---
+发送端页面 (本地): http://localhost:8080/sender.html
+接收端页面 (局域网): http://<您的局域网IP>:8080/receiver.html
+访问密码: '<您设置的密码>'
+-------------------
 ```
 
-## 📈 性能与优化 (Performance & Optimization)
+*   **发送端**: 在需要共享屏幕的设备上打开 **发送端页面** (`sender.html`)。
+*   **接收端**: 在需要观看共享的设备上打开 **接收端页面** (`receiver.html`)。可以在多个设备/浏览器标签页中打开。
 
-*   **分辨率与帧率:** 选择更高的分辨率或帧率会显著增加 CPU 和网络带宽的占用。根据网络条件和设备性能选择合适的设置。
-*   **JPEG 质量:** 服务端使用高质量 JPEG 编码 (`q:v=1`)，以保证清晰度。这在高帧率下可能成为 CPU 负载的主要来源。
-*   **网络:** WebSocket 传输效率高，但带宽消耗主要取决于视频流的大小（分辨率、帧率、质量）。720p/30fps 通常比 1080p/60fps 消耗更少带宽。
+### 🔒 使用
 
-## 📄 许可证 (License)
+1.  在 **发送端** 页面输入密码（如果设置了密码）并点击“验证”。
+2.  点击“开始共享”按钮，浏览器会弹出屏幕共享选择器。
+3.  选择要共享的屏幕或窗口，并**根据需要勾选“共享音频”**。
+4.  在 **接收端** 页面输入相同的密码（如果设置了密码）并点击“验证”。
+5.  共享画面和音频（如果启用）将自动在接收端页面显示。
 
-This project is licensed under the <a href="https://opensource.org/licenses/MIT">MIT License</a>.
+## 🏗️ 技术架构
+
+*   **后端**: [Spring Boot 3.3.4](https://spring.io/projects/spring-boot) (Java 21)
+*   **信令**: WebSocket
+*   **实时通信**: WebRTC
+    *   **发送端**: `getDisplayMedia` API
+    *   **接收端**: `RTCPeerConnection` API
+*   **前端**: HTML5, CSS3, Vanilla JavaScript (ES6+)
+
+## 📜 许可证
+
+本项目采用 **MIT 许可证**。详情请见 [LICENSE](LICENSE) 文件。
+
+## 🤝 贡献
+
+欢迎提交 Issue 和 Pull Request！
 
 ---
