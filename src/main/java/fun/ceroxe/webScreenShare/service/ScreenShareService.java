@@ -9,14 +9,20 @@ import java.util.stream.Collectors;
 
 @Service
 public class ScreenShareService {
-
     private String password = null; // Store the optional password, null if none set
     public final Map<String, String> sessionRoles = new ConcurrentHashMap<>(); // Maps session ID to role ("sender" or "receiver")
     private volatile boolean sharingActive = false; // Tracks if sharing is currently active
 
     public void setPassword(String password) {
         // Set password to null if the provided string is null or empty
-        this.password = (password != null && !password.isEmpty()) ? password : null;
+        if (password !=null && !password.isEmpty()){
+            this.password=password;
+        }else{
+            this.password=null;
+        }
+    }
+    public String getPassword() {
+        return password;
     }
 
     public boolean checkPassword(String providedPassword) {
