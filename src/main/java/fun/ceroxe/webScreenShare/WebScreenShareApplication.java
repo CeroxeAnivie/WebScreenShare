@@ -23,6 +23,17 @@ public class WebScreenShareApplication {
     private static String passwordInput = null;
 
     public static void main(String[] args) {
+        System.out.println("""
+                
+                   _____                                    \s
+                  / ____|                                   \s
+                 | |        ___   _ __    ___   __  __   ___\s
+                 | |       / _ \\ | '__|  / _ \\  \\ \\/ /  / _ \\
+                 | |____  |  __/ | |    | (_) |  >  <  |  __/
+                  \\_____|  \\___| |_|     \\___/  /_/\\_\\  \\___|
+                                                            \s
+                                                             \
+                """);
         List<String> argList = Arrays.asList(args);
         DEBUG_MODE = argList.contains("--debug");
 
